@@ -1,130 +1,148 @@
 package main;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.Scanner;
 
+import neuralnetwork.*;
+
 public class Main {
-	static ArrayList<NeuralNet> nets = new ArrayList<>();
-	public static void main(String[] args) {
-		for(int i = 0; i < 30; i++) {
-			ArrayList<Perceptron> inputLayer = new ArrayList<>();
-			for(int j = 0; j < 9*6; j++) {
-				inputLayer.add(new Perceptron());
-			}
-			try {
-				NeuralNet net = new NeuralNet(inputLayer, 4, 150, 300, 100, 9);
-				nets.add(net);
-			} catch (InsufficientArgumentsException e) {
-				System.out.println(e.getMessage());
-				return;
-			}
-		}
-		Scanner s = new Scanner(System.in);
-		int generation = 1;
-		while(true) {
-			int trainingRounds = 20;
-			while(trainingRounds > 0) {
-				System.out.println("Generation " + generation + " are now playing...");
-				ArrayList<Thread> runningGames = new ArrayList<>();
-				for(NeuralNet n : nets) {
-					Thread game = new Thread(() -> {
-					for(NeuralNet m : nets) {
-						if(n == m) continue;
-							if(n.playAgainst(m)) {
-								n.fitness += 1;
-								m.fitness -= 1;
-							} else {
-								m.fitness += 1;
-								n.fitness -= 1;
-							}
+	static NeuralNet player1 = null;
+	static NeuralNet player2 = null;
+	static Board board = new Board();
+	
+	static void playTrain(NeuralNet p1, NeuralNet p2) {
+		NeuralNet currentPlayer = p1;
+		for(int i = 0; i < 1000; i++) {
+			System.out.println("Game " + i);
+			board.cleanBoard();
+			currentPlayer = p1;
+			boolean gameInProgress = true;
+			int lastMove = 0;
+			while(gameInProgress) {
+				currentPlayer.calculate();
+				int nextMove = 0;
+				double[] networkOutput = currentPlayer.getOutputs();
+				while(true) {
+					for(int j = 0; j < 9; j++) {
+						if(networkOutput[j] > networkOutput[nextMove]) {
+							nextMove = j;
 						}
-					});
-					runningGames.add(game);
-					game.start();
-				}
-				for(Thread t : runningGames) {
-					try {
-						t.join();
-					} catch (InterruptedException e1) {
 					}
-				}
-				
-				nets.sort(new Comparator<NeuralNet>() {
-					@Override
-					public int compare(NeuralNet n, NeuralNet m) {
-						return m.fitness - n.fitness == 0 ? 0 : m.fitness > n.fitness ? 1 : -1;
+					int result = board.makeMove(nextMove);
+					if(result == -2) {
+						//current win
+						gameInProgress = false;
+						board.undoMove(nextMove);
+						board.undoMove(lastMove);
+						double[] blockingMove = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+						blockingMove[nextMove] = 1;
+						if(currentPlayer == p1) {
+							p2.trainToOutput(blockingMove, 0.01);
+						} else {
+							p1.trainToOutput(blockingMove, 0.01);
+						}
+						break;
 					}
-				});
-				
-				for(NeuralNet n : nets) {
-					n.fitness -= nets.get(nets.size() - 1).fitness;
-					System.out.println(n.fitness);
-				}
-				
-				ArrayList<NeuralNet> newGeneration = new ArrayList<>();
-					
-				double sumOfFitness = 0;
-				for(NeuralNet n : nets) {
-					sumOfFitness += n.fitness;
-				}
-				for(int i = 0; i < nets.size(); i++) {
-					double spin = Math.random() * sumOfFitness;
-					for(int j = 0; j < nets.size(); j++) {
-						spin -= nets.get(j).fitness;
-						if(spin <= 0) {
-							NeuralNet newNet = new NeuralNet(nets.get(j));
-							newNet.mutate();
-							newGeneration.add(newNet);
+					if(result == -1) {
+						if(networkOutput[nextMove] == 0) {
+							try {
+								player2 = new NeuralNet(new ArrayList<InputNode>(board.tiles), 3, 100, 100, 9);
+							} catch (Exception e) {
+								e.printStackTrace();
+								return;
+							}
+							gameInProgress = false;
 							break;
 						}
+						networkOutput[nextMove] = 0;
+						continue;
 					}
+					break;
 				}
-				
-				for(NeuralNet n : newGeneration) {
-					n.fitness = 0;
-					n.clearInputs();
-					n.markForRecalculation();
-				}
-				
-				nets = newGeneration;
-				trainingRounds--;
-				generation++;
+				lastMove = nextMove;
+				currentPlayer = (currentPlayer == p1 ? p2 : p1);
 			}
+		}
+	}
+	
+	public static void main(String[] args) {
+		try {
+			player1 = new NeuralNet(new ArrayList<InputNode>(board.tiles), 3, 100, 100, 9);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return;
+		}
+		try {
+			player2 = new NeuralNet(new ArrayList<InputNode>(board.tiles), 3, 100, 100, 9);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return;
+		}
+		
+		Scanner sc = new Scanner(System.in);
+		
+		boolean running = true;
+		while(running) {
+			playTrain(player1, player2);
 			
-			Board board = new Board(1);
-			while(true) {
-				nets.get(0).markForRecalculation();
-				int moveX = -1;
-				int moveY = -1;
-				while(moveY == -1) {
-					moveX = nets.get(0).getNextMove();
-					if(moveX == -1) break;
-					moveY = board.makeMove(moveX);
+			board.cleanBoard();
+			boolean gameInProgress = true;
+			while(gameInProgress) {
+				player1.calculate();
+				int nextMove = 0;
+				double[] networkOutput = player1.getOutputs();
+				while(true) {
+					for(int j = 0; j < 9; j++) {
+						if(networkOutput[j] > networkOutput[nextMove]) {
+							nextMove = j;
+						}
+					}
+					int result = board.makeMove(nextMove);
+					if(result == -2) {
+						gameInProgress = false;
+						break;
+					}
+					if(result == -1) {
+						if(networkOutput[nextMove] == 0) {
+							gameInProgress = false;
+							break;
+						}
+						networkOutput[nextMove] = 0;
+						continue;
+					}
+					break;
 				}
+				if(!gameInProgress) break;
+				
 				board.printBoard();
-				if(moveY == -2) {
-					break;
-				}
-				if(moveX == -1) {
-					break;
-				}
 				
-				nets.get(0).layers.get(0).get(moveX + moveY * 9).outputValue = 1;
-				
-				moveX = -1;
-				moveY = -1;
-				while(moveY == -1) {
-					moveX = s.nextInt() - 1;
-					moveY = board.makeMove(moveX);
-				}
-				if(moveY == -2) {
+				while(true) {
+					int playerMove = sc.nextInt();
+					if(playerMove < 1 || playerMove > 9) {
+						running = false;
+						gameInProgress = false;
+						break;
+					}
+					playerMove--;
+					int result = board.makeMove(playerMove);
+					if(result == -2) {
+						double[] blockingMove = player1.getOutputs();
+						board.undoMove(nextMove);
+						board.undoMove(playerMove);
+						blockingMove[playerMove] = 1;
+						player1.trainToOutput(blockingMove, 0.1);
+						gameInProgress = false;
+						break;
+					}
+					if(result == -1) {
+						continue;
+					}
 					break;
 				}
-
-				nets.get(0).layers.get(0).get(moveX + moveY * 9).outputValue = -1;
 			}
 			board.printBoard();
 		}
+		
+		sc.close();
 	}
 }
